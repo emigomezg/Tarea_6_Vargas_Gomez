@@ -26,11 +26,11 @@ typedef struct
 
 static freertos_i2c_handle_t freertos_i2c_handles[NUMBER_OF_SERIAL_PORTS] = {0};
 
-static inline void freertos_i2c_enable_port_clock(freertos_i2c_port_t port);
+static inline void freertos_i2c_enable_port_clock(freertos_i2c_port_t port, freertos_i2c_number_t i2c_number);
 
 static inline PORT_Type * freertos_i2c_get_port_base(freertos_i2c_port_t port);
 
-static inline I2C_Type * freertos_i2c_get_uart_base(freertos_i2c_number_t uart_number);
+static inline I2C_Type * freertos_i2c_get_base(freertos_i2c_number_t i2c_number);
 
 static void fsl_i2c_callback(I2C_Type *base, i2c_master_handle_t *handle, status_t status, void *userData);
 
@@ -41,17 +41,17 @@ static void fsl_i2c_callback(I2C_Type *base, i2c_master_handle_t *handle, status
 
   if (kStatus_Success == status)
   {
-	  switch(base)
+	  if(I2C0 == base)
 	  {
-	  case I2C0:
 		  xSemaphoreGiveFromISR(freertos_i2c_handles[freertos_i2c_0].tx_rx_sem, &xHigherPriorityTaskWoken);
-		  break;
-	  case I2C1:
+	  }
+	  else if(I2C1 == base)
+	  {
 		  xSemaphoreGiveFromISR(freertos_i2c_handles[freertos_i2c_1].tx_rx_sem, &xHigherPriorityTaskWoken);
-		  break;
-	  case I2C2:
+	  }
+	  else if(I2C2 == base)
+	  {
 		  xSemaphoreGiveFromISR(freertos_i2c_handles[freertos_i2c_2].tx_rx_sem, &xHigherPriorityTaskWoken);
-		  break;
 	  }
   }
 
@@ -60,7 +60,7 @@ static void fsl_i2c_callback(I2C_Type *base, i2c_master_handle_t *handle, status
 
 freertos_i2c_flag_t freertos_i2c_init(freertos_i2c_config_t config)
 {
-	freertos_i2c_flag_t retval = freertos_uart_fail;
+	freertos_i2c_flag_t retval = freertos_i2c_fail;
 	i2c_master_config_t fsl_i2c_config;
 	port_pin_config_t freertos_i2c_config = {kPORT_PullUp, kPORT_FastSlewRate, kPORT_PassiveFilterDisable, kPORT_OpenDrainDisable, kPORT_LowDriveStrength, kPORT_MuxAlt2, kPORT_UnlockRegister,};
 
@@ -76,39 +76,41 @@ freertos_i2c_flag_t freertos_i2c_init(freertos_i2c_config_t config)
 			freertos_i2c_enable_port_clock(config.i2c_number, config.port);
 
 			/* Port Config */
-			PORT_SetPinMux(freertos_i2c_get_port_base(config.port), config.scl_pin, config.pin_mux);
-			PORT_SetPinMux(freertos_i2c_get_port_base(config.port), config.sda_pin, config.pin_mux);
+			PORT_SetPinConfig(freertos_i2c_get_port_base(config.port), config.scl_pin, &freertos_i2c_config);
+			PORT_SetPinConfig(freertos_i2c_get_port_base(config.port), config.sda_pin, &freertos_i2c_config);
 
 			I2C_MasterGetDefaultConfig(&fsl_i2c_config);
 			fsl_i2c_config.baudRate_Bps = config.baudrate;
-			fsl_uart_config.enableTx = true;
 			I2C_MasterInit(freertos_i2c_get_base(config.i2c_number), &fsl_i2c_config, CLOCK_GetFreq(kCLOCK_BusClk));
 
 			I2C_MasterTransferCreateHandle(freertos_i2c_get_base(config.i2c_number), &freertos_i2c_handles[config.i2c_number].fsl_i2c_handle, fsl_i2c_callback, NULL);
 
-			freertos_i2c_handles[config.uart_number].is_init = 1;
+			freertos_i2c_handles[config.i2c_number].is_init = 1;
 
-			retval = freertos_uart_sucess;
+			retval = freertos_i2c_sucess;
 		}
 	}
 
 	return retval;
 }
 
-freertos_i2c_flag_t freertos_i2c_send(freertos_i2c_number_t uart_number, uint8_t * buffer, uint16_t lenght)
+freertos_i2c_flag_t freertos_i2c_send_receive(freertos_i2c_number_t i2c_number, uint8_t * buffer, uint16_t length, uint16_t slave_addr, uint16_t subaddr, uint8_t subsize, freertos_i2c_send_receive_t i2c_send_receive)
 {
-	freertos_i2c_flag_t flag = freertos_uart_fail;
+	freertos_i2c_flag_t flag = freertos_i2c_fail;
 	i2c_master_transfer_t xfer;
 
-	if(freertos_i2c_handles[uart_number].is_init)
+	if(freertos_i2c_handles[i2c_number].is_init)
 	{
 		xfer.data = buffer;
 		xfer.subaddress = subaddr;
 		xfer.slaveAddress = slave_addr;
 		xfer.subaddressSize = subsize;
-		xfer.direction = kI2C_Write;
 		xfer.flags = kI2C_TransferDefaultFlag;
 		xfer.dataSize = length;
+		xfer.direction = kI2C_Write;
+
+		if(i2c_receive == i2c_send_receive)
+			xfer.direction = kI2C_Read;
 
 		xSemaphoreTake(freertos_i2c_handles[i2c_number].mutex_tx_rx, portMAX_DELAY);
 
@@ -126,3 +128,87 @@ freertos_i2c_flag_t freertos_i2c_send(freertos_i2c_number_t uart_number, uint8_t
 	return flag;
 }
 
+
+static inline void freertos_i2c_enable_port_clock(freertos_i2c_port_t port, freertos_i2c_number_t i2c_number)
+{
+	switch(port)
+	{
+    case freertos_i2c_portA:
+      CLOCK_EnableClock(kCLOCK_PortA);
+      break;
+    case freertos_i2c_portB:
+      CLOCK_EnableClock(kCLOCK_PortB);
+      break;
+    case freertos_i2c_portC:
+      CLOCK_EnableClock(kCLOCK_PortC);
+      break;
+    case freertos_i2c_portD:
+      CLOCK_EnableClock(kCLOCK_PortD);
+      break;
+    case freertos_i2c_portE:
+      CLOCK_EnableClock(kCLOCK_PortE);
+      break;
+	}
+
+	switch(i2c_number)
+	{
+	/**I2C 0*/
+	case freertos_i2c_0:
+		CLOCK_EnableClock(kCLOCK_I2c0);
+		break;
+		/**I2C 1*/
+	case freertos_i2c_1:
+		CLOCK_EnableClock(kCLOCK_I2c1);
+		break;
+		/**I2C 2*/
+	case freertos_i2c_2:
+		CLOCK_EnableClock(kCLOCK_I2c2);
+		break;
+	}
+}
+
+static inline PORT_Type * freertos_i2c_get_port_base(freertos_i2c_port_t port)
+{
+  PORT_Type * port_base = PORTA;
+
+  switch(port)
+  {
+    case freertos_i2c_portA:
+      port_base = PORTA;
+      break;
+    case freertos_i2c_portB:
+      port_base = PORTB;
+      break;
+    case freertos_i2c_portC:
+      port_base = PORTC;
+      break;
+    case freertos_i2c_portD:
+      port_base = PORTD;
+      break;
+    case freertos_i2c_portE:
+      port_base = PORTE;
+      break;
+  }
+
+  return port_base;
+}
+
+static inline I2C_Type * freertos_i2c_get_base(freertos_i2c_number_t i2c_number)
+{
+	I2C_Type * retval = I2C0;
+
+	switch(i2c_number)
+	{
+    case freertos_i2c_0:
+      retval = I2C0;
+      break;
+    case freertos_i2c_1:
+      retval = I2C1;
+      break;
+    case freertos_i2c_2:
+	  retval = I2C2;
+	  break;
+	}
+
+	return retval;
+}

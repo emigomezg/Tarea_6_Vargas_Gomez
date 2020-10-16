@@ -8,6 +8,8 @@
 #ifndef I2C_RTOS_H_
 #define I2C_RTOS_H_
 
+#include <stdint.h>
+
 typedef enum
 {
   freertos_i2c_0,
@@ -40,10 +42,14 @@ typedef struct
 	uint8_t pin_mux;
 } freertos_i2c_config_t;
 
+typedef enum
+{
+	i2c_write,
+	i2c_receive
+}freertos_i2c_send_receive_t;
+
 freertos_i2c_flag_t freertos_i2c_init(freertos_i2c_config_t config);
 
-freertos_i2c_flag_t freertos_i2c_send(freertos_i2c_number_t uart_number,uint8_t * buffer, uint16_t lenght);
-
-freertos_i2c_flag_t freertos_i2c_receive(freertos_i2c_number_t i2c_number, uint8_t * buffer, uint16_t lenght);
+freertos_i2c_flag_t freertos_i2c_send_receive(freertos_i2c_number_t i2c_number, uint8_t * buffer, uint16_t length, uint16_t slave_addr, uint16_t subaddr, uint8_t subsize, freertos_i2c_send_receive_t i2c_send_receive);
 
 #endif /* I2C_RTOS_H_ */
